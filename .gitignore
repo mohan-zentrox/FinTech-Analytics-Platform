@@ -1,0 +1,39 @@
+# --- Secrets ---
+.env
+*.env.local
+
+# --- Java / Maven (core-api) ---
+core-api/target/
+*.class
+*.jar
+!maven-wrapper.jar
+.mvn/wrapper/maven-wrapper.properties
+
+# --- Python (analytics-service) ---
+analytics-service/__pycache__/
+analytics-service/**/__pycache__/
+analytics-service/.pytest_cache/
+analytics-service/venv/
+analytics-service/.venv/
+*.pyc
+
+# --- Node / frontend ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+
+# --- IDE ---
+.idea/
+.vscode/
+*.iml
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Docker ---
+docker-compose.override.yml
+
+# --- Logs ---
+*.log

@@ -1,0 +1,23 @@
+# Test profile: in-memory H2 instead of Postgres so the test suite runs
+# standalone without a running database (no Testcontainers dependency).
+# Flyway is disabled here because the V1__init.sql migration uses
+# Postgres-specific DDL (DO blocks, NUMERIC, TIMESTAMPTZ, role grants);
+# Hibernate creates the schema directly from the entity mappings instead.
+spring:
+  datasource:
+    url: jdbc:h2:mem:ledger_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+
+  flyway:
+    enabled: false
+
+jwt:
+  secret: test-only-secret-key-must-be-at-least-32-bytes-long
+  expiration-ms: 3600000

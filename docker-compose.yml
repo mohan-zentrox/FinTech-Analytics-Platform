@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-ledger}
+      POSTGRES_USER: ${DB_USER:-ledger_app}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change-me-ledger-app-password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ledger_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-ledger_app} -d ${DB_NAME:-ledger}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  core-api:
+    build:
+      context: ./core-api
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-ledger}
+      DB_USER: ${DB_USER:-ledger_app}
+      DB_PASSWORD: ${DB_PASSWORD:-change-me-ledger-app-password}
+      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-base64-string-before-deploying}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-3600000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  analytics-service:
+    build:
+      context: ./analytics-service
+    ports:
+      - "8000:8000"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-ledger}
+      ANALYTICS_DB_USER: ${ANALYTICS_DB_USER:-ledger_readonly}
+      ANALYTICS_DB_PASSWORD: ${ANALYTICS_DB_PASSWORD:-change-me-ledger-readonly-password}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:5173}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Waits on core-api rather than postgres directly because core-api's
+      # Flyway migration (V1__init.sql) is what creates the ledger_readonly
+      # role and grants this service needs.
+      core-api:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_CORE_API_BASE_URL: ${VITE_CORE_API_BASE_URL:-http://localhost:8080/api}
+        VITE_ANALYTICS_API_BASE_URL: ${VITE_ANALYTICS_API_BASE_URL:-http://localhost:8000/analytics}
+    ports:
+      - "5173:80"
+    depends_on:
+      - core-api
+      - analytics-service
+
+volumes:
+  ledger_postgres_data:
