@@ -93,45 +93,53 @@ frontend's login screen.
 
 ## Verification status of this build
 
-**This repo was authored in a sandbox with no Java/Maven, Python, Node/npm,
-or git toolchain available on PATH** (confirmed via `java -version`,
-`mvn -version`, `python --version`, `node --version`, `git --version` all
-failing). As a result:
+This repo was authored in a sandbox where neither a Java/Maven nor a
+Node/npm toolchain was reachable (`java -version`, `mvn -version`,
+`node -version` all failed, including a search of common install
+locations) - so **core-api and frontend could not be built or
+test-executed here**. Python and git *were* available (once added to
+`PATH`), and were used for real:
 
-- None of the three test suites (`mvn test`, `pytest`, `npm test`) or
-  builds could actually be executed or auto-fixed here. `git init`/`commit`
-  could not be run either - **there is no git history for this repo yet**;
-  run the commands in the "Initializing git" section below once a git
-  binary is available.
-- Every file was instead reviewed by hand for correctness: import
-  consistency across all Java/Python/TypeScript files, Spring
+- **analytics-service - actually executed**: `pip install -r
+  requirements.txt` + `pytest -v` were run for real. All **12 tests
+  passed**. This caught two genuine bugs that hand review alone missed:
+  1. an aging-bucket label bug (`_aging_buckets` was emitting `"91-90+"`
+     instead of `"90+"` for the open-ended bucket - fixed in
+     `app/services/analytics.py`);
+  2. a test-isolation bug where `test_cash_flow_router.py` and
+     `test_kpis_router.py` both mutated the same `app.dependency_overrides`
+     dict at import time, so whichever module pytest imported last would
+     silently clobber the other's fake data depending on collection order -
+     fixed by moving both to `@pytest.fixture(autouse=True)` setup/teardown.
+  The suite was also re-run after restoring the sandbox's original global
+  package versions (fastapi/pydantic/etc., which the first `pip install`
+  had inadvertently downgraded) to confirm it isn't accidentally coupled to
+  one exact dependency resolution.
+- **core-api and frontend - reviewed by hand only, not compiled**: import
+  consistency across every Java/TypeScript file, Spring
   Boot/Security/JPA/AOP wiring (bean names, `@PreAuthorize` expressions,
   JWT (jjwt 0.12.x) API usage, Hibernate UUID id generation, commons-csv
-  `setIgnoreHeaderCase` header lookups), pandas dtype handling (explicit
-  `pd.to_datetime`/`astype(float)` normalization, empty-DataFrame edge
-  cases), and TypeScript/React types (Axios client, Zustand store shape,
-  Recharts prop types).
+  `setIgnoreHeaderCase` header lookups, `AuthenticationEntryPoint` status
+  codes), and TypeScript/React types (Axios client, Zustand store shape,
+  Recharts prop types, a missing `ReactNode` import caught in
+  `Reconciliation.tsx`). **Before merging, run `mvn test` in `core-api/`
+  and `npm run build && npm test` in `frontend/` on a machine with those
+  toolchains** - this is a real gap, not a formality.
 - Test data in `analytics-service/tests/test_kpis_router.py` and
   `test_cash_flow_router.py` deliberately uses dates relative to
   `date.today()` / a wide trailing window rather than fixed calendar dates,
   specifically so the suite doesn't silently rot relative to "when someone
   actually runs it."
-- **Before merging**, whoever has a toolchain available should run all
-  three test suites and `docker compose build` at minimum; treat this
-  README note as a flag to do that first, not as a substitute for it.
 
-## Initializing git
+## Git history
 
-This repo does not yet have git history (no `git` binary was available in
-the environment that authored it). Run once, from the repo root:
+This repo's git history starts with a single commit containing this
+foundation (`git log --oneline` -> `Initial commit: Project Ledger
+foundation - ...`), created with a repo-local (not global) identity:
 
 ```bash
-git init
 git config user.name "Zentrox Engineering"
 git config user.email "engineering@zentroxglobaltechnologies.com"
-git checkout -b main   # if init didn't already default to main
-git add -A
-git commit -m "Initial commit: Project Ledger foundation - transaction ledger, CSV import, reconciliation, analytics microservice, audit log"
 ```
 
 ## Team / roles
