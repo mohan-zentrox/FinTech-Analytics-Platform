@@ -84,6 +84,41 @@ def check(name, condition, detail=""):
 
 
 print("=" * 78)
+print("0. Seeded demo accounts")
+print("=" * 78)
+
+# These four are created at startup by config.DevDataSeeder when
+# LEDGER_SEED_ENABLED is true (docker-compose sets it). Checking them here is
+# what catches a *wiring* break, which no unit test can see: compose once passed
+# SEED_*_PASSWORD as an empty string, and an empty-but-set value beats the
+# default in application.yml, so every account was created with a blank password
+# and silently rejected.
+SEEDED = [
+    ("admin", "LedgerAdmin#2026", "ADMIN"),
+    ("auditor", "LedgerAudit#2026", "ADMIN"),
+    ("analyst", "LedgerAnalyst#2026", "ANALYST"),
+    ("viewer", "LedgerViewer#2026", "VIEWER"),
+]
+
+for username, password, role in SEEDED:
+    body, st, _, _ = call("POST", f"{CORE}/auth/login",
+                          body={"username": username, "password": password})
+    check(f"seeded account '{username}' can log in",
+          st == 200 and isinstance(body, dict) and bool(body.get("token")),
+          f"status={st} body={body}")
+    check(f"seeded account '{username}' has role {role}",
+          isinstance(body, dict) and body.get("role") == role,
+          f"got {body.get('role') if isinstance(body, dict) else body}")
+
+# The seeded viewer is the cheapest end-to-end proof that RBAC is wired up.
+viewer_login, _, _, _ = call("POST", f"{CORE}/auth/login",
+                             body={"username": "viewer", "password": "LedgerViewer#2026"})
+if isinstance(viewer_login, dict) and viewer_login.get("token"):
+    _, st, _, _ = call("GET", f"{CORE}/audit-logs", token=viewer_login["token"])
+    check("seeded viewer is denied the admin-only audit trail", st == 403, f"status={st}")
+
+print()
+print("=" * 78)
 print("1. Auth and RBAC")
 print("=" * 78)
 

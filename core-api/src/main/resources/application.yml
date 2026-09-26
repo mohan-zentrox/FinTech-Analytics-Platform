@@ -53,6 +53,35 @@ jwt:
   expiration-ms: ${JWT_EXPIRATION_MS:3600000}
 
 ledger:
+  # Demo accounts created at startup by config.DevDataSeeder.
+  #
+  # DISABLED BY DEFAULT. docker-compose enables it for the local demo stack;
+  # render.yaml and the Cloud Run script deliberately do not, so a deployed
+  # environment never gets these accounts by accident.
+  #
+  # The passwords below are committed to a public repository - treat them as
+  # public knowledge. Each one has an env-var override so a shared demo can seed
+  # the same four personas with credentials that are not in git.
+  seed:
+    enabled: ${LEDGER_SEED_ENABLED:false}
+    users:
+      - username: admin
+        email: admin@projectledger.local
+        password: ${SEED_ADMIN_PASSWORD:LedgerAdmin#2026}
+        role: ADMIN
+      - username: auditor
+        email: auditor@projectledger.local
+        password: ${SEED_AUDITOR_PASSWORD:LedgerAudit#2026}
+        role: ADMIN
+      - username: analyst
+        email: analyst@projectledger.local
+        password: ${SEED_ANALYST_PASSWORD:LedgerAnalyst#2026}
+        role: ANALYST
+      - username: viewer
+        email: viewer@projectledger.local
+        password: ${SEED_VIEWER_PASSWORD:LedgerViewer#2026}
+        role: VIEWER
+
   # FRD S5.4 - anomaly/fraud detection thresholds. Owned by T2-DATA1 per BRD S4.2;
   # every rule can be tuned or switched off without a code change.
   fraud:

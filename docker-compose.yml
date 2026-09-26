@@ -24,21 +24,35 @@ services:
       context: ./core-api
     ports:
       - "8080:8080"
+    # List syntax, not map syntax, because of the four bare names at the end.
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: ${DB_NAME:-ledger}
-      DB_USER: ${DB_USER:-ledger_app}
-      DB_PASSWORD: ${DB_PASSWORD:-change-me-ledger-app-password}
-      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-base64-string-before-deploying}
-      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-3600000}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-ledger}
+      - DB_USER=${DB_USER:-ledger_app}
+      - DB_PASSWORD=${DB_PASSWORD:-change-me-ledger-app-password}
+      - JWT_SECRET=${JWT_SECRET:-change-this-to-a-long-random-base64-string-before-deploying}
+      - JWT_EXPIRATION_MS=${JWT_EXPIRATION_MS:-3600000}
       # core-api's V2 migration provisions the ledger_readonly role with exactly
       # this password, so analytics-service below can authenticate. Both services
       # read the same variable - that is the point.
-      ANALYTICS_DB_PASSWORD: ${ANALYTICS_DB_PASSWORD:-change-me-ledger-readonly-password}
-      CONNECTOR_ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY:-local-dev-only-connector-key-0123456789abcdef}
-      REPORTS_SCHEDULE_ENABLED: ${REPORTS_SCHEDULE_ENABLED:-true}
-      CONNECTORS_SANDBOX: ${CONNECTORS_SANDBOX:-true}
+      - ANALYTICS_DB_PASSWORD=${ANALYTICS_DB_PASSWORD:-change-me-ledger-readonly-password}
+      - CONNECTOR_ENCRYPTION_KEY=${CONNECTOR_ENCRYPTION_KEY:-local-dev-only-connector-key-0123456789abcdef}
+      - REPORTS_SCHEDULE_ENABLED=${REPORTS_SCHEDULE_ENABLED:-true}
+      - CONNECTORS_SANDBOX=${CONNECTORS_SANDBOX:-true}
+      # Creates the four demo accounts on first start (see docs/CREDENTIALS.md).
+      # On by default here because this file IS the local demo stack; every
+      # deployment manifest leaves it off.
+      - LEDGER_SEED_ENABLED=${LEDGER_SEED_ENABLED:-true}
+      # Bare names on purpose: Compose passes these through ONLY when they are
+      # actually set. Writing `SEED_ADMIN_PASSWORD=${SEED_ADMIN_PASSWORD:-}`
+      # instead sets the variable to an empty string, and an empty-but-set value
+      # beats the default in application.yml - which silently left every seeded
+      # account with a blank password.
+      - SEED_ADMIN_PASSWORD
+      - SEED_AUDITOR_PASSWORD
+      - SEED_ANALYST_PASSWORD
+      - SEED_VIEWER_PASSWORD
     depends_on:
       postgres:
         condition: service_healthy
