@@ -47,12 +47,13 @@ def _override_transactions_provider():
 client = TestClient(app)
 
 
-def test_cash_flow_endpoint_returns_series_for_account():
+def test_cash_flow_endpoint_returns_series_for_account(auth_headers):
     # A wide trailing window (24 months) so this HTTP-contract test doesn't
     # depend on which calendar month the suite happens to run in - the
     # month-bucketing logic itself is covered precisely, with an explicit
     # as_of, in tests/test_analytics_service.py.
-    response = client.get("/analytics/cash-flow", params={"accountId": "ACC-1", "months": 24})
+    response = client.get(
+        "/analytics/cash-flow", params={"accountId": "ACC-1", "months": 24}, headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -62,12 +63,26 @@ def test_cash_flow_endpoint_returns_series_for_account():
     assert sum(m["outflow"] for m in body["series"]) == 400.0
 
 
-def test_cash_flow_requires_account_id():
-    response = client.get("/analytics/cash-flow")
+def test_cash_flow_requires_account_id(auth_headers):
+    response = client.get("/analytics/cash-flow", headers=auth_headers)
     assert response.status_code == 422
 
 
-def test_health_check():
+def test_cash_flow_rejects_an_out_of_range_months_value(auth_headers):
+    assert client.get(
+        "/analytics/cash-flow",
+        params={"accountId": "ACC-1", "months": 0},
+        headers=auth_headers,
+    ).status_code == 422
+    assert client.get(
+        "/analytics/cash-flow",
+        params={"accountId": "ACC-1", "months": 37},
+        headers=auth_headers,
+    ).status_code == 422
+
+
+def test_health_check_is_open_and_reports_the_auth_mode():
+    # Deliberately unauthenticated: a platform health check must not need a credential.
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "authRequired": True}

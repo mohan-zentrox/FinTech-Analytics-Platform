@@ -6,6 +6,9 @@ psycopg2-binary==2.9.9
 pydantic==2.7.4
 pydantic-settings==2.3.4
 python-dotenv==1.0.1
+# JWT verification of the same HS256 tokens core-api issues, so /analytics/**
+# is no longer an unauthenticated read of the ledger.
+PyJWT==2.8.0
 
 # test-only, kept in the same file for a single-image Docker build;
 # split into requirements-dev.txt if the image needs to shrink later.

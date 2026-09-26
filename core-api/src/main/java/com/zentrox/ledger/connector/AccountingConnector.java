@@ -1,30 +1,48 @@
 package com.zentrox.ledger.connector;
 
+import java.time.LocalDate;
+
 /**
- * SCAFFOLD ONLY (FRD S6.2 "Accounting Source Connectors").
+ * Contract every accounting-source connector implements (FRD S6.2), so the
+ * ingestion pipeline can treat QuickBooks, Xero and NetSuite uniformly.
  *
- * Common contract that QuickBooks/Xero/NetSuite-style OAuth connectors will
- * implement so TransactionService/CsvImportService-equivalent ingestion
- * code can treat every accounting source uniformly.
+ * Implementations own only the provider-specific parts - the authorization URL's
+ * query shape and the mapping from the provider's JSON to
+ * {@link ExternalTransaction}. Everything common (token exchange, refresh,
+ * encrypted persistence, pagination, de-duplicated upsert into the ledger) lives
+ * in {@link AbstractAccountingConnector} and {@link ConnectorSyncService}.
  *
- * TODO: define the OAuth2 authorization-code flow (per-provider client
- * id/secret/redirect URI, token storage + refresh) - likely a new
- * `connector_credential` table keyed by (tenantId/accountId, provider).
- * TODO: define syncTransactions(accountId) to page through the provider's
- * transaction API and funnel results through the same canonical Transaction
- * schema + (source, externalId) de-dup used by CsvImportService.
+ * The previous version of this interface defaulted every method to
+ * {@code UnsupportedOperationException}; those defaults are gone, so a new
+ * provider cannot silently compile into a no-op.
  */
 public interface AccountingConnector {
 
+    /** Lower-case provider key, matching the `ledger.connectors.providers.*` config key. */
     String providerName();
 
-    default void connect(String accountId, String authorizationCode) {
-        throw new UnsupportedOperationException(
-                providerName() + " OAuth connect() is not implemented - see FRD S6.2");
-    }
+    /**
+     * URL to send the administrator to in order to grant access.
+     *
+     * @param state CSRF/state value the provider echoes back to the redirect URI
+     */
+    String buildAuthorizationUrl(String state);
 
-    default void syncTransactions(String accountId) {
-        throw new UnsupportedOperationException(
-                providerName() + " syncTransactions() is not implemented - see FRD S6.2");
-    }
+    /** Exchanges the authorization code the provider redirected back with. */
+    OAuthTokenResponse exchangeCode(String authorizationCode);
+
+    /** Trades a refresh token for a new access token. */
+    OAuthTokenResponse refreshAccessToken(String refreshToken);
+
+    /**
+     * Fetches one page of transactions.
+     *
+     * @param cursor null for the first page, otherwise the previous page's
+     *               {@link SyncPage#nextCursor()}
+     */
+    SyncPage fetchTransactions(String accessToken, String realmId, String account,
+                               LocalDate since, String cursor);
+
+    /** True when this connector is operating against the simulated provider. */
+    boolean isSandbox();
 }

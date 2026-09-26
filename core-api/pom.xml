@@ -21,6 +21,11 @@
     <java.version>17</java.version>
     <jjwt.version>0.12.5</jjwt.version>
     <commons-csv.version>1.10.0</commons-csv.version>
+    <!-- FRD S6.1 report rendering: OpenPDF (LGPL/MPL fork of iText 4) for PDF,
+         Apache POI for XLSX. Both chosen over iText 7 / JasperReports because
+         their licences allow commercial use without a per-deployment fee. -->
+    <openpdf.version>1.3.43</openpdf.version>
+    <poi.version>5.2.5</poi.version>
   </properties>
 
   <dependencies>
@@ -43,6 +48,13 @@
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-aop</artifactId>
+    </dependency>
+    <!-- Supplies /actuator/health, which application.yml already configured and
+         which container/platform health checks depend on. Without this starter
+         those endpoints simply 404. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
 
     <dependency>
@@ -72,6 +84,18 @@
       <artifactId>jjwt-jackson</artifactId>
       <version>${jjwt.version}</version>
       <scope>runtime</scope>
+    </dependency>
+
+    <!-- FRD S6.1 - scheduled report rendering -->
+    <dependency>
+      <groupId>com.github.librepdf</groupId>
+      <artifactId>openpdf</artifactId>
+      <version>${openpdf.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.poi</groupId>
+      <artifactId>poi-ooxml</artifactId>
+      <version>${poi.version}</version>
     </dependency>
 
     <!-- CSV import -->

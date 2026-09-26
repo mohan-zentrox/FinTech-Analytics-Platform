@@ -1,0 +1,68 @@
+# Single-VM deployment (Oracle Cloud Always Free, or any small VPS).
+#
+# This is the option with no sleep, no cold starts and no per-service limits: one
+# always-free ARM VM (Oracle's Always Free Ampere A1 allowance is 2 OCPU / 12 GB as
+# of mid-2026, down from 4/24) comfortably runs the whole stack including Postgres.
+# Because nothing scales to zero here, the scheduled monthly report job actually
+# fires - which is why REPORTS_SCHEDULE_ENABLED defaults to true in this file and
+# false in the serverless ones.
+#
+# Usage on the VM:
+#   cp .env.example .env && edit it (set every change-me value)
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+#
+# Put a TLS-terminating reverse proxy (Caddy/nginx/Traefik) in front of this; the
+# services below deliberately bind to localhost only.
+
+services:
+  postgres:
+    restart: unless-stopped
+    # Not published to the host: only the other containers need to reach it.
+    ports: !override []
+    volumes:
+      - ledger_postgres_data:/var/lib/postgresql/data
+
+  core-api:
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:8080:8080"
+    environment:
+      REPORTS_SCHEDULE_ENABLED: ${REPORTS_SCHEDULE_ENABLED:-true}
+      REPORTS_RETENTION_DAYS: ${REPORTS_RETENTION_DAYS:-365}
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      JAVA_OPTS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  analytics-service:
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:8000:8000"
+    environment:
+      ANALYTICS_REQUIRE_AUTH: "true"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:8081:80"
+    environment:
+      # Runtime config (see frontend/docker-entrypoint.sh): set these to the public
+      # URLs your reverse proxy exposes, so the prebuilt bundle does not need rebuilding.
+      CORE_API_BASE_URL: ${PUBLIC_CORE_API_BASE_URL:-}
+      ANALYTICS_API_BASE_URL: ${PUBLIC_ANALYTICS_API_BASE_URL:-}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  ledger_postgres_data:

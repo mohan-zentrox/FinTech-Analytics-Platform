@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { login } from "../../api/auth";
 import { useAuthStore } from "../../store/authStore";
@@ -73,6 +73,13 @@ export default function Login() {
           {submitting ? "Signing in..." : "Sign in"}
         </button>
       </form>
+
+      <p className="mt-4 text-center text-sm text-slate-500">
+        No account yet?{" "}
+        <Link to="/register" className="font-medium text-brand-700 hover:underline">
+          Create one
+        </Link>
+      </p>
     </div>
   );
 }

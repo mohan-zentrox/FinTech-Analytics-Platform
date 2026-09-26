@@ -1,0 +1,26 @@
+# Netlify config for the frontend. Point "base" at the frontend directory when
+# connecting the repo, or copy this file to frontend/netlify.toml.
+
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+# Set VITE_CORE_API_BASE_URL / VITE_ANALYTICS_API_BASE_URL in the Netlify UI
+# (Site settings -> Environment variables) - they are baked in at build time.
+
+[[headers]]
+  for = "/config.js"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# SPA fallback so client-side routes resolve on refresh and on the OAuth redirect.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

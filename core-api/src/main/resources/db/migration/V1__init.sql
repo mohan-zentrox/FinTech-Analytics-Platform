@@ -59,23 +59,10 @@ CREATE TABLE reconciliation_match (
 
 CREATE INDEX idx_recon_run_id ON reconciliation_match (run_id);
 
--- Read-only role for the analytics-service (Python/FastAPI), per FRD S5.5.
--- Password must be rotated and supplied via ANALYTICS_DB_PASSWORD in every
--- non-local environment; this default is for docker-compose local dev only.
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'ledger_readonly') THEN
-        CREATE ROLE ledger_readonly LOGIN PASSWORD 'ledger_readonly_password';
-    END IF;
-END
-$$;
-
-DO $$
-BEGIN
-    EXECUTE format('GRANT CONNECT ON DATABASE %I TO ledger_readonly', current_database());
-END
-$$;
-
-GRANT USAGE ON SCHEMA public TO ledger_readonly;
-GRANT SELECT ON transactions, audit_log, reconciliation_match, app_user TO ledger_readonly;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO ledger_readonly;
+-- NOTE: the read-only `ledger_readonly` role for analytics-service used to be
+-- created here with a hard-coded password, which silently disagreed with the
+-- ANALYTICS_DB_PASSWORD supplied by docker-compose/.env. Role provisioning now
+-- lives in V2__analytics_readonly_role.sql, where the password comes from a
+-- Flyway placeholder and insufficient privileges degrade to a NOTICE instead of
+-- failing the whole migration (managed/free-tier Postgres often forbids
+-- CREATE ROLE).

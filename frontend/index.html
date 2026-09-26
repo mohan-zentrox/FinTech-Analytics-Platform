@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Project Ledger</title>
+    <!-- Runtime config, loaded before the bundle so api/client.ts can read it.
+         Rewritten from env vars by the Docker image's entrypoint. -->
+    <script src="/config.js"></script>
   </head>
   <body class="bg-slate-50 text-slate-900">
     <div id="root"></div>

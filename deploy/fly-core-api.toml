@@ -1,0 +1,45 @@
+# Fly.io configuration for core-api.
+#
+# Fly no longer has a standing free allowance - new organisations get trial credit
+# instead - so treat this as the "cheapest always-on" option rather than a free one.
+# It is included because `auto_stop_machines`/`min_machines_running = 0` makes an
+# idle deployment cost effectively nothing, and unlike the scale-to-zero platforms
+# a Fly machine can be pinned always-on if you want the scheduled report job to
+# actually fire.
+app = "ledger-core-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  DB_POOL_MAX = "3"
+  CONNECTORS_SANDBOX = "true"
+  # Safe to enable here: a machine with min_machines_running = 1 stays awake, so a
+  # cron trigger inside the JVM will actually fire.
+  REPORTS_SCHEDULE_ENABLED = "false"
+  JAVA_OPTS = "-XX:MaxRAMPercentage=65 -XX:+UseSerialGC -Xss512k"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.checks]
+    [[http_service.checks.http]]
+      interval = "15s"
+      timeout = "5s"
+      grace_period = "60s"
+      method = "GET"
+      path = "/actuator/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# Secrets are set out of band, never in this file:
+#   fly secrets set DATABASE_URL=... DB_USER=... DB_PASSWORD=... \
+#     JWT_SECRET=... CONNECTOR_ENCRYPTION_KEY=... ANALYTICS_DB_PASSWORD=...

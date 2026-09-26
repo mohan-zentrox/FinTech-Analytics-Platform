@@ -1,0 +1,97 @@
+# Render Blueprint - one-click deploy of core-api + analytics-service + frontend.
+#
+# IMPORTANT: this intentionally does NOT declare a Render Postgres database.
+# Render's free Postgres expires 30 days after creation and is then deleted, which
+# makes it unusable as the permanent home for a ledger. Create a free Neon or
+# Supabase project instead and set DATABASE_URL / ANALYTICS_* below from it.
+# See docs/DEPLOYMENT.md for the exact steps.
+#
+# Free-plan caveats that affect this stack:
+#  - Web services sleep after 15 minutes idle; the first request afterwards pays a
+#    cold start (~30s for the JVM service). REPORTS_SCHEDULE_ENABLED is therefore
+#    false: a sleeping container cannot fire a cron trigger.
+#  - 750 instance-hours/month are shared across the whole workspace, so two
+#    always-on free services would exhaust them. Sleeping services do not accrue.
+
+services:
+  - type: web
+    name: ledger-core-api
+    runtime: docker
+    plan: free
+    region: oregon
+    rootDir: core-api
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /actuator/health
+    envVars:
+      # Paste the Neon/Supabase JDBC URL, e.g.
+      # jdbc:postgresql://ep-xxx.eu-central-1.aws.neon.tech/ledger?sslmode=require
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      # Free-tier Postgres caps connections hard; keep the pool small.
+      - key: DB_POOL_MAX
+        value: "3"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CONNECTOR_ENCRYPTION_KEY
+        generateValue: true
+      # Managed Postgres usually forbids CREATE ROLE, so the V2 migration will skip
+      # provisioning ledger_readonly and log a NOTICE. Point analytics-service at
+      # whatever read-only credentials the provider gave you instead.
+      - key: ANALYTICS_DB_PASSWORD
+        sync: false
+      - key: REPORTS_SCHEDULE_ENABLED
+        value: "false"
+      - key: CONNECTORS_SANDBOX
+        value: "true"
+      - key: JAVA_OPTS
+        value: "-XX:MaxRAMPercentage=65 -XX:+UseSerialGC -Xss512k"
+
+  - type: web
+    name: ledger-analytics-service
+    runtime: docker
+    plan: free
+    region: oregon
+    rootDir: analytics-service
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: "5432"
+      - key: DB_NAME
+        sync: false
+      - key: ANALYTICS_DB_USER
+        sync: false
+      - key: ANALYTICS_DB_PASSWORD
+        sync: false
+      # MUST match ledger-core-api's JWT_SECRET: this service verifies the tokens
+      # core-api issues. Copy the generated value across after the first deploy.
+      - key: JWT_SECRET
+        sync: false
+      - key: ANALYTICS_REQUIRE_AUTH
+        value: "true"
+      - key: CORS_ALLOW_ORIGINS
+        sync: false
+
+  # Static site: always on, no sleep, and it does not consume instance hours.
+  - type: web
+    name: ledger-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_CORE_API_BASE_URL
+        sync: false
+      - key: VITE_ANALYTICS_API_BASE_URL
+        sync: false
+    routes:
+      # SPA fallback so /transactions, /connectors/callback etc. resolve on refresh.
+      - type: rewrite
+        source: /*
+        destination: /index.html

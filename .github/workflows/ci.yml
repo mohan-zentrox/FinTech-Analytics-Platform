@@ -70,10 +70,13 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: frontend/package.json
+          cache-dependency-path: frontend/package-lock.json
 
+      # `npm ci` rather than `npm install`: it installs exactly the committed
+      # lockfile, so CI cannot silently pass against different dependency
+      # versions than a developer resolved locally.
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Type-check and build
         run: npm run build
@@ -85,18 +88,70 @@ jobs:
         run: npm run lint
         continue-on-error: true
 
-  docker-build:
-    name: Docker image build sanity check
+  # The gate that matters most: the unit suites all pass against mocks and H2,
+  # but every defect listed in README's "Verification status" section was one
+  # only a real stack could expose - RBAC through the actual filter chain,
+  # Flyway against real Postgres, the JWT crossing a language boundary, and
+  # whether the generated PDF/XLSX bytes are valid documents.
+  end-to-end:
+    name: end-to-end (docker compose + smoke test)
     runs-on: ubuntu-latest
     needs: [core-api, analytics-service, frontend]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build core-api image
-        run: docker build -t ledger-core-api:ci ./core-api
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-      - name: Build analytics-service image
-        run: docker build -t ledger-analytics-service:ci ./analytics-service
+      - name: Create a .env with generated secrets
+        run: |
+          cp .env.example .env
+          # Distinct app and read-only passwords, so a mix-up cannot pass unnoticed.
+          sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n')|" .env
+          sed -i "s|^CONNECTOR_ENCRYPTION_KEY=.*|CONNECTOR_ENCRYPTION_KEY=$(openssl rand -base64 32 | tr -d '\n')|" .env
+          sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=ci-app-$(openssl rand -hex 8)|" .env
+          sed -i "s|^ANALYTICS_DB_PASSWORD=.*|ANALYTICS_DB_PASSWORD=ci-readonly-$(openssl rand -hex 8)|" .env
 
-      - name: Build frontend image
-        run: docker build -t ledger-frontend:ci ./frontend
+      - name: Build and start the stack
+        run: docker compose up -d --build --wait
+
+      - name: Show service status
+        run: docker compose ps
+
+      - name: Run the end-to-end smoke test
+        run: python scripts/e2e-smoke-test.py
+
+      - name: Verify the read-only role cannot reach the token store
+        run: |
+          set -eu
+          . ./.env
+          RO="postgresql://${ANALYTICS_DB_USER}:${ANALYTICS_DB_PASSWORD}@127.0.0.1:5432/${DB_NAME}"
+
+          # Must succeed.
+          docker compose exec -T postgres psql "$RO" -tAc 'SELECT count(*) FROM transactions' > /dev/null
+
+          # Must all fail. A migration regression here would silently hand the
+          # analytics role the encrypted OAuth tokens and the report documents.
+          for table in connector_credential report_run fraud_alert; do
+            if docker compose exec -T postgres psql "$RO" -tAc "SELECT 1 FROM ${table} LIMIT 1" > /dev/null 2>&1; then
+              echo "FAIL: ledger_readonly can read ${table}"
+              exit 1
+            fi
+            echo "ok: ledger_readonly denied on ${table}"
+          done
+
+          if docker compose exec -T postgres psql "$RO" -tAc 'DELETE FROM transactions' > /dev/null 2>&1; then
+            echo "FAIL: ledger_readonly can write to transactions"
+            exit 1
+          fi
+          echo "ok: ledger_readonly denied write access"
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

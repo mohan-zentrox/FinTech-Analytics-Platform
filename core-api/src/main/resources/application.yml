@@ -1,15 +1,23 @@
 server:
-  port: ${SERVER_PORT:8080}
+  # PORT is what Render / Cloud Run / Koyeb / Railway inject; SERVER_PORT keeps
+  # the docker-compose and local-dev contract unchanged.
+  port: ${PORT:${SERVER_PORT:8080}}
+  forward-headers-strategy: framework
 
 spring:
   application:
     name: ledger-core-api
 
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ledger}
+    url: ${DATABASE_URL:jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ledger}}
     username: ${DB_USER:ledger_app}
     password: ${DB_PASSWORD:ledger_app_password}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # Managed/free-tier Postgres instances cap connections aggressively
+      # (Neon free = 100 shared, Supabase pooler = fewer still), and this
+      # service is not the only consumer of the database.
+      maximum-pool-size: ${DB_POOL_MAX:5}
 
   jpa:
     hibernate:
@@ -25,6 +33,12 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+    placeholders:
+      # Consumed by V2__analytics_readonly_role.sql so the read-only role's
+      # password is defined once, here, instead of being hard-coded in SQL and
+      # silently diverging from ANALYTICS_DB_PASSWORD (which is what used to
+      # happen, leaving analytics-service unable to authenticate).
+      analyticsDbPassword: ${ANALYTICS_DB_PASSWORD:ledger_readonly_password}
 
   servlet:
     multipart:
@@ -32,9 +46,84 @@ spring:
       max-request-size: 10MB
 
 # HS256 key must be >= 32 bytes. Override JWT_SECRET in every non-local environment (.env.example).
+# analytics-service validates tokens with this same secret, so the two services
+# must always be configured with an identical value.
 jwt:
   secret: ${JWT_SECRET:change-this-local-dev-only-secret-please-0123456789abcdef}
   expiration-ms: ${JWT_EXPIRATION_MS:3600000}
+
+ledger:
+  # FRD S5.4 - anomaly/fraud detection thresholds. Owned by T2-DATA1 per BRD S4.2;
+  # every rule can be tuned or switched off without a code change.
+  fraud:
+    lookback-days: ${FRAUD_LOOKBACK_DAYS:90}
+    # Same account + same absolute amount + same normalised description inside
+    # this window is treated as a probable duplicate payment.
+    duplicate-window-days: ${FRAUD_DUPLICATE_WINDOW_DAYS:7}
+    # |z-score| of the amount within its (account, category) peer group.
+    outlier-z-threshold: ${FRAUD_OUTLIER_Z_THRESHOLD:3.0}
+    # A peer group smaller than this has too little history for a meaningful z-score.
+    outlier-min-sample-size: ${FRAUD_OUTLIER_MIN_SAMPLE:8}
+    # Transactions on a single day above (mean + k * stddev) of the daily count.
+    velocity-z-threshold: ${FRAUD_VELOCITY_Z_THRESHOLD:3.0}
+    velocity-min-daily-count: ${FRAUD_VELOCITY_MIN_DAILY_COUNT:5}
+    # Suspiciously round large amounts (a multiple of this, at or above the floor).
+    round-amount-multiple: ${FRAUD_ROUND_AMOUNT_MULTIPLE:1000}
+    round-amount-floor: ${FRAUD_ROUND_AMOUNT_FLOOR:10000}
+    # Automatically flag the offending Transaction rows as FLAGGED on scan.
+    auto-flag-transactions: ${FRAUD_AUTO_FLAG:false}
+
+  # FRD S6.1 - scheduled reporting.
+  reports:
+    # Monthly cash-flow statement for every account with activity.
+    # Default: 02:00 on the 1st of each month. Set schedule-enabled=false to
+    # disable the cron job entirely (recommended for scale-to-zero hosting,
+    # where a background timer is unreliable anyway).
+    schedule-enabled: ${REPORTS_SCHEDULE_ENABLED:false}
+    cron: ${REPORTS_CRON:0 0 2 1 * *}
+    zone: ${REPORTS_TZ:UTC}
+    default-format: ${REPORTS_DEFAULT_FORMAT:PDF}
+    # Generated documents are stored in the report_run table; prune anything
+    # older than this on each scheduled run (0 = keep forever).
+    retention-days: ${REPORTS_RETENTION_DAYS:365}
+
+  # FRD S6.2 - accounting source connectors.
+  connectors:
+    # AES-256-GCM key protecting stored OAuth tokens. MUST be overridden outside
+    # local dev; 32+ bytes, e.g. `openssl rand -base64 32`.
+    encryption-key: ${CONNECTOR_ENCRYPTION_KEY:local-dev-only-connector-key-0123456789abcdef}
+    # With no client credentials configured a provider runs in sandbox mode: the
+    # OAuth handshake and sync are simulated deterministically so the feature is
+    # demoable end-to-end without signing up for Intuit/Xero/NetSuite developer
+    # accounts. Set the *-client-id/*-client-secret pairs to go live.
+    sandbox: ${CONNECTORS_SANDBOX:true}
+    sync-page-size: ${CONNECTORS_SYNC_PAGE_SIZE:100}
+    sync-max-pages: ${CONNECTORS_SYNC_MAX_PAGES:20}
+    providers:
+      quickbooks:
+        client-id: ${QUICKBOOKS_CLIENT_ID:}
+        client-secret: ${QUICKBOOKS_CLIENT_SECRET:}
+        redirect-uri: ${QUICKBOOKS_REDIRECT_URI:http://localhost:5173/connectors/callback}
+        authorization-uri: https://appcenter.intuit.com/connect/oauth2
+        token-uri: https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer
+        api-base-uri: ${QUICKBOOKS_API_BASE_URI:https://sandbox-quickbooks.api.intuit.com}
+        scope: com.intuit.quickbooks.accounting
+      xero:
+        client-id: ${XERO_CLIENT_ID:}
+        client-secret: ${XERO_CLIENT_SECRET:}
+        redirect-uri: ${XERO_REDIRECT_URI:http://localhost:5173/connectors/callback}
+        authorization-uri: https://login.xero.com/identity/connect/authorize
+        token-uri: https://identity.xero.com/connect/token
+        api-base-uri: https://api.xero.com/api.xro/2.0
+        scope: offline_access accounting.transactions.read
+      netsuite:
+        client-id: ${NETSUITE_CLIENT_ID:}
+        client-secret: ${NETSUITE_CLIENT_SECRET:}
+        redirect-uri: ${NETSUITE_REDIRECT_URI:http://localhost:5173/connectors/callback}
+        authorization-uri: ${NETSUITE_AUTHORIZATION_URI:https://system.netsuite.com/app/login/oauth2/authorize.nl}
+        token-uri: ${NETSUITE_TOKEN_URI:https://system.netsuite.com/services/rest/auth/oauth2/v1/token}
+        api-base-uri: ${NETSUITE_API_BASE_URI:https://system.netsuite.com/services/rest/record/v1}
+        scope: rest_webservices
 
 management:
   endpoints:

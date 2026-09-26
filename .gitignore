@@ -22,6 +22,11 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 frontend/coverage/
+# Safety net: tsconfig*.json redirect these into node_modules/.tmp, but a stale
+# checkout or a changed config must not slip build output into the repo.
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 # --- IDE ---
 .idea/
@@ -34,6 +39,9 @@ Thumbs.db
 
 # --- Docker ---
 docker-compose.override.yml
+
+# --- Generated sample data (recreate with scripts/make-sample-data.py) ---
+sample-transactions.csv
 
 # --- Logs ---
 *.log

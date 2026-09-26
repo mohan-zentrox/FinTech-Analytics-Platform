@@ -1,4 +1,6 @@
-version: "3.9"
+# Local/demo stack: postgres + all three services.
+# `version:` is intentionally omitted - it has been obsolete since Compose v2
+# and only produced a warning on every invocation.
 
 services:
   postgres:
@@ -30,6 +32,13 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-change-me-ledger-app-password}
       JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-base64-string-before-deploying}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-3600000}
+      # core-api's V2 migration provisions the ledger_readonly role with exactly
+      # this password, so analytics-service below can authenticate. Both services
+      # read the same variable - that is the point.
+      ANALYTICS_DB_PASSWORD: ${ANALYTICS_DB_PASSWORD:-change-me-ledger-readonly-password}
+      CONNECTOR_ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY:-local-dev-only-connector-key-0123456789abcdef}
+      REPORTS_SCHEDULE_ENABLED: ${REPORTS_SCHEDULE_ENABLED:-true}
+      CONNECTORS_SANDBOX: ${CONNECTORS_SANDBOX:-true}
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,14 +55,14 @@ services:
       ANALYTICS_DB_USER: ${ANALYTICS_DB_USER:-ledger_readonly}
       ANALYTICS_DB_PASSWORD: ${ANALYTICS_DB_PASSWORD:-change-me-ledger-readonly-password}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:5173}
+      # Must match core-api: analytics endpoints now verify the same HS256 JWT.
+      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-base64-string-before-deploying}
     depends_on:
-      postgres:
-        condition: service_healthy
-      # Waits on core-api rather than postgres directly because core-api's
-      # Flyway migration (V1__init.sql) is what creates the ledger_readonly
-      # role and grants this service needs.
+      # Waits for core-api to be *healthy*, not merely started: core-api's Flyway
+      # migrations are what create the ledger_readonly role and its grants, and
+      # `service_started` used to let this service race ahead of them.
       core-api:
-        condition: service_started
+        condition: service_healthy
 
   frontend:
     build:

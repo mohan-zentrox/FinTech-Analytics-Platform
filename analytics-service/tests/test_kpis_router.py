@@ -51,8 +51,8 @@ def _override_transactions_provider():
 client = TestClient(app)
 
 
-def test_kpis_endpoint_returns_aging_buckets_and_burn_rate():
-    response = client.get("/analytics/kpis", params={"accountId": "ACC-1"})
+def test_kpis_endpoint_returns_aging_buckets_and_burn_rate(auth_headers):
+    response = client.get("/analytics/kpis", params={"accountId": "ACC-1"}, headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -62,6 +62,6 @@ def test_kpis_endpoint_returns_aging_buckets_and_burn_rate():
     assert "burn_rate" in body
 
 
-def test_kpis_requires_account_id():
-    response = client.get("/analytics/kpis")
+def test_kpis_requires_account_id(auth_headers):
+    response = client.get("/analytics/kpis", headers=auth_headers)
     assert response.status_code == 422
