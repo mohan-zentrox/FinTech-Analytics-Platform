@@ -126,23 +126,39 @@ jobs:
       - name: Verify the read-only role cannot reach the token store
         run: |
           set -eu
-          . ./.env
-          RO="postgresql://${ANALYTICS_DB_USER}:${ANALYTICS_DB_PASSWORD}@127.0.0.1:5432/${DB_NAME}"
 
-          # Must succeed.
-          docker compose exec -T postgres psql "$RO" -tAc 'SELECT count(*) FROM transactions' > /dev/null
+          # Read the values out of .env literally. Do NOT `source` it: .env is a
+          # docker-compose env file, not a shell script, so a value containing
+          # spaces (REPORTS_CRON=0 0 2 1 * *) is parsed as an assignment followed
+          # by a command, which exits 127 and fails the step.
+          env_value() { grep -E "^$1=" .env | head -1 | cut -d= -f2-; }
+
+          DB_NAME="$(env_value DB_NAME)"
+          RO_USER="$(env_value ANALYTICS_DB_USER)"
+          RO_PASSWORD="$(env_value ANALYTICS_DB_PASSWORD)"
+
+          # PGPASSWORD plus discrete flags rather than a connection URI, so a
+          # password containing URI-significant characters needs no escaping.
+          ro_psql() {
+            docker compose exec -T -e PGPASSWORD="$RO_PASSWORD" postgres \
+              psql -h 127.0.0.1 -U "$RO_USER" -d "$DB_NAME" -tAc "$1"
+          }
+
+          # Must succeed: analytics genuinely needs to read the ledger.
+          ro_psql 'SELECT count(*) FROM transactions' > /dev/null
+          echo "ok: ledger_readonly can read transactions"
 
           # Must all fail. A migration regression here would silently hand the
           # analytics role the encrypted OAuth tokens and the report documents.
           for table in connector_credential report_run fraud_alert; do
-            if docker compose exec -T postgres psql "$RO" -tAc "SELECT 1 FROM ${table} LIMIT 1" > /dev/null 2>&1; then
+            if ro_psql "SELECT 1 FROM ${table} LIMIT 1" > /dev/null 2>&1; then
               echo "FAIL: ledger_readonly can read ${table}"
               exit 1
             fi
             echo "ok: ledger_readonly denied on ${table}"
           done
 
-          if docker compose exec -T postgres psql "$RO" -tAc 'DELETE FROM transactions' > /dev/null 2>&1; then
+          if ro_psql 'DELETE FROM transactions' > /dev/null 2>&1; then
             echo "FAIL: ledger_readonly can write to transactions"
             exit 1
           fi
