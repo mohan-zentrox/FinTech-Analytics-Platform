@@ -11,6 +11,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -34,7 +35,12 @@ class AuthControllerIntegrationTest {
     void registerThenLoginReturnsAJwt() throws Exception {
         RegisterRequest register = new RegisterRequest("carol", "carol@example.com", "password123", Role.ANALYST);
 
+        // ANALYST is privileged, so an ADMIN has to provision it. Acting as an
+        // admin here rather than relying on the empty-table bootstrap keeps this
+        // test independent of the order the suite happens to run in - the H2
+        // schema is shared across the whole run.
         mockMvc.perform(post("/api/auth/register")
+                        .with(user("integration-admin").roles("ADMIN"))
                         .contentType("application/json")
                         .content(objectMapper.writeValueAsString(register)))
                 .andExpect(status().isCreated())
@@ -70,5 +76,46 @@ class AuthControllerIntegrationTest {
     void unauthenticatedRequestToProtectedEndpointIsRejected() throws Exception {
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/transactions"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    /**
+     * Regression test for the privilege-escalation hole: an unauthenticated
+     * caller could POST a `role` of ADMIN and receive a working ADMIN token.
+     */
+    @Test
+    void selfRegistrationCannotClaimAPrivilegedRole() throws Exception {
+        // Guarantee a non-empty user table, so the first-run bootstrap exemption
+        // cannot be what answers this request.
+        RegisterRequest seedViewer = new RegisterRequest(
+                "escalation-probe-viewer", "probe-viewer@example.com", "password123", Role.VIEWER);
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType("application/json")
+                        .content(objectMapper.writeValueAsString(seedViewer)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.role").value("VIEWER"));
+
+        for (Role privileged : new Role[]{Role.ADMIN, Role.ANALYST}) {
+            RegisterRequest attempt = new RegisterRequest(
+                    "escalate-to-" + privileged, "escalate-" + privileged + "@evil.test",
+                    "password123", privileged);
+
+            mockMvc.perform(post("/api/auth/register")
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(attempt)))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.status").value(403));
+        }
+    }
+
+    @Test
+    void registrationWithNoRoleDefaultsToViewer() throws Exception {
+        RegisterRequest register = new RegisterRequest(
+                "no-role-given", "no-role-given@example.com", "password123", null);
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType("application/json")
+                        .content(objectMapper.writeValueAsString(register)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.role").value("VIEWER"));
     }
 }

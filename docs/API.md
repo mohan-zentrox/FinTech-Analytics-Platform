@@ -9,16 +9,28 @@ All core-api endpoints except `/api/auth/**` require `Authorization: Bearer <jwt
 ## Auth (core-api)
 
 ### `POST /api/auth/register`
-Body:
+Body (`role` optional):
 ```json
 { "username": "carol", "email": "carol@example.com", "password": "password123", "role": "ANALYST" }
 ```
-`role` is one of `ADMIN`, `ANALYST`, `VIEWER`. Returns `201` with an `AuthResponse`
-(`token`, `tokenType`, `username`, `role`, `expiresInMs`).
+Returns `201` with an `AuthResponse` (`token`, `tokenType`, `username`, `role`,
+`expiresInMs`).
 
-> Registration currently accepts `role` directly for bootstrap/demo
-> convenience - restrict this to admin-only in a hardened deployment
-> (see docs/ARCHITECTURE.md).
+`role` is one of `ADMIN`, `ANALYST`, `VIEWER`, and defaults to `VIEWER` when
+omitted. This endpoint is unauthenticated, so what it is allowed to grant is
+restricted rather than who may call it:
+
+| Caller | `role` omitted or `VIEWER` | `ANALYST` / `ADMIN` |
+|---|---|---|
+| Anonymous | `201`, VIEWER account | **`403`** |
+| ANALYST or VIEWER token | `201`, VIEWER account | **`403`** |
+| ADMIN token | `201`, VIEWER account | `201` at the requested role |
+| Anyone, while `app_user` is empty | `201`, VIEWER account | `201` (first-run bootstrap) |
+
+The bootstrap row is how a deployment running without account seeding creates its
+first administrator. It stops applying the moment any account exists.
+
+`403` responses use the standard error body: `{ "timestamp", "status": 403, "error" }`.
 
 ### `POST /api/auth/login`
 Body: `{ "username": "carol", "password": "password123" }` -> `200` with an `AuthResponse`.
@@ -30,6 +42,10 @@ RBAC: `GET` = ADMIN/ANALYST/VIEWER, `POST`/`PUT`/import = ADMIN/ANALYST, `DELETE
 ### `GET /api/transactions?account=&dateFrom=&dateTo=&minAmount=&maxAmount=&status=&page=&size=`
 All query params optional except pagination defaults (`page=0`, `size=20`).
 `dateFrom`/`dateTo` are ISO-8601 dates (`yyyy-MM-dd`). Returns a `PageResponse<TransactionDto>`.
+
+`size` is clamped server-side to **200**; a larger value is silently reduced
+rather than rejected. The same cap applies to `/api/audit-logs` and
+`/api/fraud/alerts`; `/api/reports` caps at 100.
 
 ### `GET /api/transactions/{id}`
 ### `POST /api/transactions` - body matches `TransactionCreateRequest`.

@@ -31,6 +31,13 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class TransactionController {
 
+    /**
+     * Upper bound on `size`, mirroring AuditLogController and
+     * FraudDetectionController. Without it `?size=100000000` is passed straight
+     * through to `LIMIT`, and one request can pull the whole table into memory.
+     */
+    private static final int MAX_PAGE_SIZE = 200;
+
     private final TransactionService transactionService;
     private final CsvImportService csvImportService;
 
@@ -49,7 +56,8 @@ public class TransactionController {
     ) {
         TransactionSearchCriteria criteria = new TransactionSearchCriteria(
                 account, dateFrom, dateTo, minAmount, maxAmount, status);
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "postedDate"));
+        Pageable pageable = PageRequest.of(page, Math.min(size, MAX_PAGE_SIZE),
+                Sort.by(Sort.Direction.DESC, "postedDate"));
         Page<TransactionDto> result = transactionService.search(criteria, pageable).map(TransactionDto::from);
         return ResponseEntity.ok(PageResponse.from(result));
     }

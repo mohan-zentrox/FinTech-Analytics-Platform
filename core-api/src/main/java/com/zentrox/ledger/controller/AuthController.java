@@ -14,9 +14,11 @@ import org.springframework.web.bind.annotation.*;
  * Registration and login. Issues JWTs consumed by every other endpoint via
  * the Authorization: Bearer <token> header (see JwtAuthenticationFilter).
  *
- * NOTE: registration currently accepts a `role` field directly for
- * bootstrap/demo convenience. In a hardened deployment this endpoint should
- * be admin-only for anything above VIEWER (see docs/API.md).
+ * Registration is open but NOT privilege-granting: `role` is optional and
+ * self-service signup always yields VIEWER. Creating an ANALYST or ADMIN
+ * requires an ADMIN bearer token, except on a completely empty user table,
+ * where the first account may claim any role so a deployment running without
+ * account seeding can bootstrap itself. See AuthService#authorizeRequestedRole.
  */
 @RestController
 @RequestMapping("/api/auth")

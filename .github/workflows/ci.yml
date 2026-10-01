@@ -149,8 +149,13 @@ jobs:
           echo "ok: ledger_readonly can read transactions"
 
           # Must all fail. A migration regression here would silently hand the
-          # analytics role the encrypted OAuth tokens and the report documents.
-          for table in connector_credential report_run fraud_alert; do
+          # analytics role the encrypted OAuth tokens, the report documents, or
+          # every user's bcrypt password hash.
+          #
+          # app_user is on this list because omitting it is exactly how the
+          # password_hash grant survived V6: the check enumerated the tables
+          # someone had already thought about.
+          for table in connector_credential report_run fraud_alert app_user; do
             if ro_psql "SELECT 1 FROM ${table} LIMIT 1" > /dev/null 2>&1; then
               echo "FAIL: ledger_readonly can read ${table}"
               exit 1

@@ -33,7 +33,9 @@ render.yaml           Render Blueprint
 ## What it does
 
 **Ledger (core-api).** JWT register/login with `ADMIN` / `ANALYST` / `VIEWER`
-RBAC. Transaction CRUD with search, filtering and pagination. Idempotent CSV
+RBAC. Self-service registration only ever creates a `VIEWER`; privileged roles
+must be provisioned by an existing admin. Transaction CRUD with search, filtering
+and pagination (page size capped server-side). Idempotent CSV
 import de-duplicated by `(source, externalId)` with per-row error reporting.
 Rule-based reconciliation across two transaction sets with amount/date tolerances,
 persisting both matches and exceptions. Every mutating operation is recorded in an
@@ -43,8 +45,9 @@ append-only audit trail by an AOP aspect.
 (z-score within an account/category peer group), velocity spike, and suspiciously
 round large amounts — with every threshold configurable. Findings are persisted as
 triageable alerts: re-scanning refreshes open alerts but never reopens one an
-analyst has already confirmed or dismissed. `analytics-service` implements the same
-rules in pandas as an exploratory view with request-tunable thresholds.
+analyst has already confirmed or dismissed. `analytics-service` reimplements three
+of the four in pandas (`ROUND_AMOUNT` is core-api only) as an exploratory view with
+request-tunable thresholds.
 
 **Reporting (FRD S6.1).** Cash-flow statements, reconciliation-exception reports
 and anomaly-alert reports, rendered to PDF (OpenPDF) or Excel (Apache POI).
@@ -79,16 +82,58 @@ docker compose up --build
 - analytics-service: http://localhost:8000/analytics (docs at `/docs`, health at `/health`)
 - postgres: localhost:5432
 
-Create the first user through the frontend's **Create one** link, or:
+### Demo accounts
+
+`docker-compose.yml` seeds these four accounts on first start, covering every
+role and both admin personas. Sign in at http://localhost:5173 with any of them
+instead of registering by hand. Emails are `<username>@projectledger.local`.
+
+| Username  | Password             | Role    | Use it to see |
+|-----------|----------------------|---------|---------------|
+| `admin`   | `LedgerAdmin#2026`   | ADMIN   | Everything, including deletes and connector setup |
+| `auditor` | `LedgerAudit#2026`   | ADMIN   | The compliance view — the Audit Trail screen |
+| `analyst` | `LedgerAnalyst#2026` | ANALYST | Day-to-day work: import, reconcile, triage alerts, generate reports |
+| `viewer`  | `LedgerViewer#2026`  | VIEWER  | Read-only access — a good way to watch RBAC take links away |
+
+> **These passwords are public.** They are committed to this repository, so treat
+> them as public knowledge. Seeding is **off by default** (`LEDGER_SEED_ENABLED`);
+> `docker-compose.yml` turns it on because that file *is* the local demo stack.
+> `render.yaml` and `deploy/cloudrun-deploy.sh` leave it off, so a deployment
+> never gets these accounts unless someone sets the flag deliberately.
+
+Override any of them with `SEED_ADMIN_PASSWORD` / `SEED_AUDITOR_PASSWORD` /
+`SEED_ANALYST_PASSWORD` / `SEED_VIEWER_PASSWORD` in `.env` **before the first
+start** - seeding is idempotent, so it will not overwrite an account that already
+exists. Full detail in `docs/CREDENTIALS.md`.
+
+### Registering your own account
+
+Self-service registration is open, but it is not privilege-granting - it always
+creates a `VIEWER`:
 
 ```bash
 curl -X POST http://localhost:8080/api/auth/register \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","email":"admin@example.com","password":"password123","role":"ADMIN"}'
+  -d '{"username":"alice","email":"alice@example.com","password":"password123"}'
 ```
 
-> Registration accepts a `role` for bootstrap convenience. Restrict
-> `POST /api/auth/register` to admins before any real deployment.
+Creating an `ANALYST` or `ADMIN` requires an existing admin's bearer token:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"LedgerAdmin#2026"}' \
+  | sed -E 's/.*"token":"([^"]+)".*/\1/')
+
+curl -X POST http://localhost:8080/api/auth/register \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"username":"bob","email":"bob@example.com","password":"password123","role":"ANALYST"}'
+```
+
+The one exception is first-run bootstrap: while the user table is completely
+empty there is no admin to ask, so the very first account may claim any role.
+That window closes permanently as soon as one account exists - which is how a
+deployment running with seeding off still gets its first administrator.
 
 ### Running services individually (without Docker)
 
@@ -101,16 +146,16 @@ curl -X POST http://localhost:8080/api/auth/register \
 
 | Suite | Command | Count |
 |---|---|---|
-| core-api | `cd core-api && mvn test` | 150 |
+| core-api | `cd core-api && mvn test` | 166 |
 | analytics-service | `cd analytics-service && pytest -v` | 64 |
 | frontend | `cd frontend && npm test` | 46 |
-| end-to-end | `python scripts/e2e-smoke-test.py` | 96 checks |
+| end-to-end | `python scripts/e2e-smoke-test.py` | 116 checks |
 
 - **core-api**: JUnit 5 + Mockito unit tests (JWT, transaction/reconciliation/CSV
   import/auth/fraud/report/connector services, the fraud rule engine and both
   document renderers), plus `@SpringBootTest` + MockMvc integration tests covering
-  the auth flow, the RBAC matrix and the health endpoint — against in-memory H2, so
-  no live Postgres is needed.
+  the auth flow, the registration role rules, the RBAC matrix and the health
+  endpoint — against in-memory H2, so no live Postgres is needed.
 - **analytics-service**: pure-pandas unit tests against hand-built DataFrames, plus
   FastAPI `TestClient` HTTP-contract tests with the DB dependency swapped for an
   in-memory fake, plus a JWT suite covering forged/expired/`alg=none`/wrong-algorithm
@@ -121,14 +166,23 @@ curl -X POST http://localhost:8080/api/auth/register \
   HTTP against a running `docker compose` stack. It asserts on what unit tests
   cannot reach: RBAC through the real filter chain, the shared JWT accepted across
   two services in different languages, idempotency against a real unique
-  constraint, and whether the generated PDF/XLSX bytes actually parse as documents.
+  constraint, whether the generated PDF/XLSX bytes actually parse as documents,
+  and that registration cannot be used to escalate to a privileged role.
+
+  It needs a **fresh** stack — it asserts on exact row counts and creates fixed
+  usernames, so a second run against the same database fails on `409 Conflict`:
+
+  ```bash
+  docker compose down -v && docker compose up -d --build --wait
+  python scripts/e2e-smoke-test.py
+  ```
 
 ## Verification status of this build
 
 Unlike the initial commit — which shipped with core-api and the frontend never
 compiled, because no Java or Node toolchain was available where it was authored —
 **every suite above has been executed**, and the full stack has been run under
-`docker compose` against real PostgreSQL 16 with all 96 end-to-end checks passing.
+`docker compose` against real PostgreSQL 16 with all end-to-end checks passing.
 
 Running it for real is what surfaced the following, none of which any amount of
 hand review had caught:
@@ -157,6 +211,59 @@ hand review had caught:
 8. **The audit-log endpoint required the id of the row you were looking for**,
    which made "show me the audit trail" impossible.
 9. **The transaction explorer issued one API request per keystroke.**
+
+### Security fixes in this revision
+
+A later pass probed the running stack rather than reading it, and closed three
+holes the test suites were all green through:
+
+10. **Anyone could register themselves as `ADMIN`.** `POST /api/auth/register` is
+    unauthenticated by necessity and honoured whatever `role` the body asked for,
+    so a single unauthenticated request returned a working ADMIN token — verified
+    against the live stack reaching `/api/audit-logs` and `/api/connectors`.
+    Registration now always yields `VIEWER`; a privileged role requires an ADMIN
+    bearer token, except while the user table is empty (first-run bootstrap).
+    Covered by `AuthServiceTest`, `AuthControllerIntegrationTest` and the
+    end-to-end suite, which now asserts the 403 and that no token is issued.
+11. **`GET /api/transactions` had no page-size cap.** `?size=100000000` returned
+    `200` with `size` echoed back verbatim and passed straight through to SQL
+    `LIMIT`, so one request could pull the whole table into heap. The three sibling
+    paginated endpoints already clamped; this one had been missed. Capped at 200,
+    and the end-to-end suite now checks the clamp on all four.
+12. **The analytics read-only role could read password hashes.** `V2` granted, and
+    `V6` re-asserted, `SELECT` on `app_user` to `ledger_readonly` — enough to read
+    every user's bcrypt hash with the analytics credentials, confirmed live.
+    analytics-service only ever queries `transactions` (one `SELECT`, in
+    `app/db.py`). `V7__revoke_app_user_from_analytics.sql` withdraws it, and the
+    CI privilege check now includes `app_user` — omitting it is precisely how the
+    grant survived `V6`.
+
+### Known limitations
+
+Still true of this build, and deliberately out of scope rather than overlooked:
+
+- **No user lifecycle.** Only register and login exist — no change-password, no
+  reset, no admin user management or deactivation.
+- **No token revocation.** Logout clears client state only; a leaked token stays
+  valid until it expires (default one hour).
+- **Currency is stored but not used in arithmetic.** Cash-flow, KPI, burn-rate and
+  amount-based fraud rules sum raw `amount` values, and reconciliation matches on
+  amount and date without comparing `currency`. Single-currency ledgers are
+  unaffected; a mixed-currency ledger would produce meaningless totals.
+- **No rate limiting on `/api/auth/login`**, no CSP or other security headers in
+  `frontend/nginx.conf`, and CORS on core-api allows any origin.
+- **`JWT_SECRET` and `CONNECTOR_ENCRYPTION_KEY` have working defaults.** Nothing
+  refuses to boot on them, so a deployment that forgets to set them runs on a key
+  that is published in this repository.
+- **Report documents live in Postgres `BYTEA`** — no object storage needed, which
+  is the point, but it does not scale.
+- **`ReportScheduler` has no distributed lock**, so more than one core-api
+  instance would generate duplicate monthly reports.
+- **`reconciliation_match` has no foreign key** to `transactions`, so an admin
+  hard-delete leaves orphan match rows (`fraud_alert` does have one).
+- **Audit writes are best-effort.** `AuditLoggingAspect` logs and swallows a
+  failure so it cannot break the business operation, which means a mutation can
+  succeed without an audit row.
 
 ## Git history
 

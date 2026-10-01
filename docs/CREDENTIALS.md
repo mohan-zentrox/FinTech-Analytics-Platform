@@ -64,8 +64,9 @@ SEED_VIEWER_PASSWORD=...
 ```
 
 Set them in `.env` before the **first** start. Because seeding is idempotent,
-changing a password after the account exists has no effect — reset the database
-(`docker compose down -v`) or change it through the application.
+changing a password after the account exists has no effect, and there is no
+change-password endpoint (see README's "Known limitations"), so the only way to
+rotate a seeded password is to reset the database: `docker compose down -v`.
 
 ## Turning seeding off
 
@@ -78,10 +79,14 @@ Then register your first account through the UI's **Create one** link.
 
 ## Before any real deployment
 
-These accounts are a local convenience and are not the security model. Two things
-to do before exposing the platform:
+These accounts are a local convenience and are not the security model.
 
-1. Keep `LEDGER_SEED_ENABLED` unset or `false` — every deployment manifest in
-   `deploy/` already does.
-2. Restrict `POST /api/auth/register`, which currently lets anyone create an
-   account at any role including ADMIN. See `docs/DEPLOYMENT.md`.
+Keep `LEDGER_SEED_ENABLED` unset or `false` — every deployment manifest in
+`deploy/` already does. Note that `.env.example` ships it as `true` for the local
+demo, so if you copied that file as the basis for a deployment, change it.
+
+`POST /api/auth/register` used to let anyone create an account at any role
+including ADMIN. It no longer does: self-service registration always produces a
+`VIEWER`, and a privileged role requires an ADMIN token. The one exception is a
+completely empty user table, which lets a seeding-disabled deployment bootstrap
+its first administrator — see `docs/API.md` for the full matrix.

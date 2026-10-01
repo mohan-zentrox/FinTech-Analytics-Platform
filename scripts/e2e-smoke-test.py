@@ -110,6 +110,14 @@ for username, password, role in SEEDED:
           isinstance(body, dict) and body.get("role") == role,
           f"got {body.get('role') if isinstance(body, dict) else body}")
 
+# Self-service registration can only create a VIEWER, so a privileged account has
+# to be provisioned by an existing admin. The seeded admin is that admin.
+seeded_admin_login, _, _, _ = call("POST", f"{CORE}/auth/login",
+                                   body={"username": "admin", "password": "LedgerAdmin#2026"})
+SEEDED_ADMIN_TOKEN = (seeded_admin_login or {}).get("token")
+check("seeded admin token is available to provision accounts", bool(SEEDED_ADMIN_TOKEN),
+      f"body={seeded_admin_login}")
+
 # The seeded viewer is the cheapest end-to-end proof that RBAC is wired up.
 viewer_login, _, _, _ = call("POST", f"{CORE}/auth/login",
                              body={"username": "viewer", "password": "LedgerViewer#2026"})
@@ -122,23 +130,49 @@ print("=" * 78)
 print("1. Auth and RBAC")
 print("=" * 78)
 
-admin, admin_status, _, _ = call("POST", f"{CORE}/auth/register", body={
+# --- Privilege escalation must not be possible through registration ---------
+# This endpoint is unauthenticated by necessity, and it used to honour whatever
+# `role` the body asked for: anyone who could reach the API could mint an ADMIN
+# token and then read the audit trail, manage connectors and delete ledger rows.
+for privileged in ("ADMIN", "ANALYST"):
+    escalated, st, _, _ = call("POST", f"{CORE}/auth/register", body={
+        "username": f"e2e-escalate-{privileged.lower()}",
+        "email": f"e2e-escalate-{privileged.lower()}@evil.test",
+        "password": "password123", "role": privileged})
+    check(f"anonymous self-registration as {privileged} -> 403", st == 403, f"status={st}")
+    check(f"no token is issued for the rejected {privileged} signup",
+          not (isinstance(escalated, dict) and escalated.get("token")), f"body={escalated}")
+
+defaulted, st, _, _ = call("POST", f"{CORE}/auth/register", body={
+    "username": "e2e-selfsignup", "email": "e2e-selfsignup@example.com",
+    "password": "password123"})
+check("self-signup with no role -> 201 as VIEWER",
+      st == 201 and (defaulted or {}).get("role") == "VIEWER", f"status={st} body={defaulted}")
+
+# --- Provisioned accounts (an ADMIN token is required for privileged roles) ---
+admin, admin_status, _, _ = call("POST", f"{CORE}/auth/register", token=SEEDED_ADMIN_TOKEN, body={
     "username": "e2e-admin", "email": "e2e-admin@example.com",
     "password": "password123", "role": "ADMIN"})
-check("register ADMIN returns 201 with a token", admin_status == 201 and admin.get("token"),
+check("ADMIN provisions an ADMIN -> 201 with a token", admin_status == 201 and admin.get("token"),
       f"status={admin_status} body={admin}")
 ADMIN_TOKEN = admin.get("token") if isinstance(admin, dict) else None
 
-analyst, st, _, _ = call("POST", f"{CORE}/auth/register", body={
+analyst, st, _, _ = call("POST", f"{CORE}/auth/register", token=SEEDED_ADMIN_TOKEN, body={
     "username": "e2e-analyst", "email": "e2e-analyst@example.com",
     "password": "password123", "role": "ANALYST"})
-check("register ANALYST", st == 201, f"status={st}")
+check("ADMIN provisions an ANALYST", st == 201, f"status={st}")
 ANALYST_TOKEN = analyst.get("token") if isinstance(analyst, dict) else None
+
+# An ANALYST token must not be able to provision either.
+_, st, _, _ = call("POST", f"{CORE}/auth/register", token=ANALYST_TOKEN, body={
+    "username": "e2e-analyst-escalation", "email": "e2e-analyst-escalation@evil.test",
+    "password": "password123", "role": "ADMIN"})
+check("ANALYST cannot provision an ADMIN -> 403", st == 403, f"status={st}")
 
 viewer, st, _, _ = call("POST", f"{CORE}/auth/register", body={
     "username": "e2e-viewer", "email": "e2e-viewer@example.com",
     "password": "password123", "role": "VIEWER"})
-check("register VIEWER", st == 201, f"status={st}")
+check("self-service VIEWER registration still works unauthenticated", st == 201, f"status={st}")
 VIEWER_TOKEN = viewer.get("token") if isinstance(viewer, dict) else None
 
 _, st, _, _ = call("POST", f"{CORE}/auth/login", body={"username": "e2e-admin", "password": "password123"})
@@ -241,6 +275,20 @@ check("re-import is idempotent (0 imported)", isinstance(imp2, dict) and imp2.ge
 page, st, _, _ = call("GET", f"{CORE}/transactions?account=ACC-E2E&size=100", token=VIEWER_TOKEN)
 check("VIEWER can search transactions", st == 200 and page.get("totalElements", 0) >= 16,
       f"status={st} total={page.get('totalElements') if isinstance(page, dict) else page}")
+
+# An unbounded `size` is passed straight through to SQL LIMIT, so one request
+# could pull the entire table into heap. The controller clamps it to 200, in line
+# with the audit-log, fraud-alert and report-history endpoints.
+huge, st, _, _ = call("GET", f"{CORE}/transactions?size=100000000", token=VIEWER_TOKEN)
+check("an absurd page size is clamped, not honoured",
+      st == 200 and isinstance(huge, dict) and huge.get("size") == 200,
+      f"status={st} size={huge.get('size') if isinstance(huge, dict) else huge}")
+
+for endpoint, cap in (("audit-logs", 200), ("fraud/alerts", 200), ("reports", 100)):
+    body, st, _, _ = call("GET", f"{CORE}/{endpoint}?size=100000000", token=ADMIN_TOKEN)
+    check(f"{endpoint} clamps page size to {cap}",
+          st == 200 and isinstance(body, dict) and body.get("size") == cap,
+          f"status={st} size={body.get('size') if isinstance(body, dict) else body}")
 
 filtered, st, _, _ = call("GET", f"{CORE}/transactions?account=ACC-E2E&status=POSTED&minAmount=1000&size=100",
                           token=ANALYST_TOKEN)

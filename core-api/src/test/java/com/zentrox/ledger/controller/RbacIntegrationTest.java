@@ -10,6 +10,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -37,12 +38,20 @@ class RbacIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    /** Registers a user and returns its bearer token. */
+    /**
+     * Provisions a user at the given role and returns its bearer token.
+     *
+     * Acts as an ADMIN because self-service registration can only create a
+     * VIEWER - see AuthService#authorizeRequestedRole. The token that comes back
+     * is a real JWT for the new user at the requested role, which is what the
+     * assertions below exercise.
+     */
     private String tokenFor(String username, Role role) throws Exception {
         RegisterRequest register = new RegisterRequest(
                 username, username + "@example.com", "password123", role);
 
         String body = mockMvc.perform(post("/api/auth/register")
+                        .with(user("rbac-provisioning-admin").roles("ADMIN"))
                         .contentType("application/json")
                         .content(objectMapper.writeValueAsString(register)))
                 .andExpect(status().isCreated())
